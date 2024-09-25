@@ -4,10 +4,15 @@ import time
 import requests
 import typing as t
 import json
+from tqdm import tqdm
 
 from furl import furl
 from PIL import Image
 from io import BytesIO
+
+CategoryWithHierarchyType = t.Dict[str, t.Dict[t.Any, t.Any]]
+CatalogType = t.List[CategoryWithHierarchyType]
+FlattenCategoriesType = t.List[t.Dict[str, str]]
 
 def find_card_url(
     item_id: t.Union[int, str],
@@ -106,3 +111,50 @@ def get_images_urls_from_card_url(
             
     return images_urls_list
 
+def construct_browse_url(
+    query: str,
+    shard: str,
+) -> str:
+    browse_cat_url = furl(f'https://catalog.wb.ru/catalog/{shard}/v2/catalog?ab_testing=false')
+    browse_cat_url.add({'appType': '1'})
+    browse_cat_url.add({'curr': 'rub'})
+    browse_cat_url.add({'dest': '-446116'})
+    browse_cat_url.add({'sort': 'popular'})
+    browse_cat_url.add({'spp': '30'})
+    browse_cat_url.add({'uclusters': '0'})
+    browse_cat_url.add(query)
+    return browse_cat_url.url
+
+def dfs(category, categories_list: t.List[t.Dict[str, str]]):
+    # Print the current category's information
+    # print(f"Name: {category.get('name')}, Shard: {category.get('shard')}, Query: {category.get('query')}")
+    categories_list.append({
+        "category_id": category.get("id"),
+        "name": category.get('name'),
+        'shard': category.get('shard'),
+        'query': category.get('query')
+    })
+    
+    # If there are child categories, recursively call dfs on each one
+    if 'childs' in category:
+        for child in category['childs']:
+            dfs(child, categories_list)
+        
+def get_browse_categories_with_urls(
+    catalog: CatalogType
+) -> FlattenCategoriesType:
+    
+    categories_list = []    
+    for one_category in catalog:
+        dfs(category=one_category, categories_list=categories_list)
+
+    for category in tqdm(categories_list):
+        if category['shard'] == 'blackhole' or category['shard'] is None:
+            continue
+        browse_result_url = construct_browse_url(
+            query=category["query"],
+            shard=category['shard']
+        )
+        category['url'] = browse_result_url
+    return categories_list
+    
