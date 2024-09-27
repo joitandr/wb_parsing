@@ -14,6 +14,13 @@ CategoryWithHierarchyType = t.Dict[str, t.Dict[t.Any, t.Any]]
 CatalogType = t.List[CategoryWithHierarchyType]
 FlattenCategoriesType = t.List[t.Dict[str, str]]
 
+CATALOG_URL = 'https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v2.json'
+
+def get_catalog(catalog_url: str=CATALOG_URL) -> CatalogType:
+    catalog = requests.get(catalog_url).json()
+    return catalog
+
+
 def find_card_url(
     item_id: t.Union[int, str],
     max_retries: int=40,
@@ -157,4 +164,49 @@ def get_browse_categories_with_urls(
         )
         category['url'] = browse_result_url
     return categories_list
+    
+def get_all_urls(
+    catalog: CatalogType,
+    save_path: t.Optional[str]=None,
+) -> FlattenCategoriesType:
+    
+    flatten_categories_with_urls = get_browse_categories_with_urls(catalog=catalog)
+    for flatten_category in tqdm(flatten_categories_with_urls, desc='flatten_categories_with_urls'):
+        url = flatten_category.get('url')
+        if url is None:
+            continue 
+        try:
+            category_products = json.loads(requests.get(url).content)
+        except Exception as e:
+            category_products = []
+            continue
+        
+        items_metadata = {}
+        for i, item_metadata in tqdm(enumerate(category_products['data']['products'], start=1)):
+            if i % 20 == 0:
+                time.sleep(4)
+            item_id = item_metadata['id']
+            card_url, success_flag = find_card_url(
+                item_id=item_id,
+                max_retries=40,
+                sleep_time=0.1,
+                verbose=False,
+                start_basket_number=10,
+                max_basket_number=30
+            )
+            if success_flag:
+                items_metadata[item_id] = {'card_url': card_url}
+                item_images_urls = get_images_urls_from_card_url(
+                    card_url=card_url,
+                    n_images=None,
+                    verify=True
+                )
+                items_metadata[item_id]['item_images_urls'] = item_images_urls
+        flatten_category['products'] = items_metadata
+        if save_path is not None:
+            json.dump(flatten_categories_with_urls, open(save_path, mode='w', encoding='utf-8'))
+    return flatten_categories_with_urls
+
+
+    
     
