@@ -10,9 +10,15 @@ from furl import furl
 from PIL import Image
 from io import BytesIO
 
-CategoryWithHierarchyType = t.Dict[str, t.Dict[t.Any, t.Any]]
-CatalogType = t.List[CategoryWithHierarchyType]
-FlattenCategoriesType = t.List[t.Dict[str, str]]
+from src.project_types import (
+    CategoryWithHierarchyType,
+    CatalogType,
+    FlattenCategoriesType
+)
+
+# CategoryWithHierarchyType = t.Dict[str, t.Dict[t.Any, t.Any]]
+# CatalogType = t.List[CategoryWithHierarchyType]
+# FlattenCategoriesType = t.List[t.Dict[str, str]]
 
 CATALOG_URL = 'https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v2.json'
 
