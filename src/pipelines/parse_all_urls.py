@@ -22,7 +22,7 @@ def parse_args():
         '--save_path', 
         type=str,
         default=None, 
-        help="The city where the person lives (optional)"
+        help="Where to save parsed data"
     )
     # Parse the arguments
     args = parser.parse_args()
