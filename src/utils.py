@@ -1,4 +1,9 @@
 from tqdm import tqdm
+import requests
+
+import typing as t
+from PIL import Image
+from IPython.display import display
 
 from src.project_types import (
     FlattenCategoriesType,
@@ -27,3 +32,17 @@ def get_uniq_items_with_images(
             if item_id not in uniq_items_with_images:
                 uniq_items_with_images[item_id] = item_metadata['item_images_urls']
     return uniq_items_with_images
+
+
+def show_items_images(
+    items_images_list: t.List[str],
+    image_size: t.Optional[t.Tuple[int, int]]=None,
+):
+    for item_url in items_images_list:
+        res = Image.open(requests.get(
+            item_url, 
+            stream=True
+        ).raw).convert("RGB")
+        if image_size is not None:
+            res = res.resize(size=image_size)
+        display(res)

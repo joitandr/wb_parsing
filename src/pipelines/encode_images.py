@@ -71,7 +71,6 @@ if __name__ == '__main__':
     images_embeddings = encode_images(
         images_urls={item_id: images_urls_list for i, (item_id, images_urls_list) in enumerate(uniq_items_with_images.items())},
         encoder_model=image_encoder,
-        save_every_n_iterations=10,
         save_path=args.save_path,
         verbose=True
     )

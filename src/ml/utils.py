@@ -6,7 +6,22 @@ import requests
 from numpy.typing import NDArray
 from transformers import ViTImageProcessor, ViTModel
 from PIL import Image
+from PIL.Image import Image as ImageType
 from PIL.WebPImagePlugin import WebPImageFile
+
+from qdrant_client import QdrantClient
+from qdrant_client.models import VectorParams, Distance
+
+from src.utils import show_items_images
+
+
+ItemPayloadDataType = t.Dict[str, t.Any]
+
+
+def _get_image_file_from_url(image_url: str) -> WebPImageFile:
+    image = Image.open(requests.get(image_url, stream=True).raw).convert("RGB")
+    return image
+    
 
 class ImageEncoder:
     def __init__(self, model_str: str='google/vit-base-patch16-224-in21k'):
@@ -15,17 +30,110 @@ class ImageEncoder:
         self.model = ViTModel.from_pretrained(model_str)
         print("ok")
         
-    @staticmethod
-    def _get_image_file_from_url(image_url: str) -> WebPImageFile:
-        image = Image.open(requests.get(image_url, stream=True).raw).convert("RGB")
-        return image
+    # @staticmethod
+    # def _get_image_file_from_url(image_url: str) -> WebPImageFile:
+    #     image = Image.open(requests.get(image_url, stream=True).raw).convert("RGB")
+    #     return image
         
-    def encode(self, image_url: str) -> NDArray[float]:
-        image = ImageEncoder._get_image_file_from_url(image_url=image_url)
+    def encode(self, image_url: t.Optional[str]=None, image: t.Optional[ImageType]=None) -> NDArray[float]:
+        assert (
+            (int(image_url is not None) + int(image is not None)) % 2 == 0,
+            "At least one (and maximum one!) of image_url or image should be provided!"
+        )
+        if image is None:
+            # image = ImageEncoder._get_image_file_from_url(image_url=image_url)
+            image = _get_image_file_from_url(image_url=image_url)
         inputs = self.processor(images=image, return_tensors="pt")
         outputs = self.model(**inputs)
         image_emb = outputs.last_hidden_state[0][0].detach().numpy()
         return image_emb    
+
+
+class VectorIndex:
+    def __init__(self, url: str, index_name: str):
+        self.index = QdrantClient(url)
+        self.index_name = index_name
+        
+    def _init_index(self, embedding_dim: int):
+        self.index.recreate_collection(
+            collection_name=self.index_name,
+            vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
+        )
+        return
+    
+    def create_index(
+        self, 
+        items_vectors: NDArray[float],
+        payload: t.Iterable[ItemPayloadDataType],
+        embedding_dim: t.Optional[int]=None,
+        batch_size: int=128,
+    ):
+        if embedding_dim is None:
+            embedding_dim = items_vectors.shape[1]
+        self._init_index(embedding_dim=embedding_dim)
+        self.index.upload_collection(
+            collection_name=self.index_name,
+            vectors=items_vectors,
+            payload=payload,
+            ids=None,  # Vector ids will be assigned automatically
+            batch_size=batch_size,  # How many vectors will be uploaded in a single request?
+        )
+        return self
+    
+    def search(
+        self, 
+        image: t.Optional[ImageType]=None,
+        image_url: t.Optional[str]=None,
+        image_embedding: t.Optional[NDArray[float]]=None,
+        image_encoder: t.Optional[ImageEncoder]=None,
+        top_n_results: int=5,
+        show_results: bool=False,
+        image_key: str='image_1',
+        result_images_size: t.Optional[t.Tuple[int]]=None,
+    ) -> t.List[ItemPayloadDataType]:
+        
+        if image_embedding is None:
+            assert image_encoder is not None, (
+                "In case image_embedding is not provided, image_encoder should be given!"
+            )
+        
+        assert (
+            (
+                int(image is not None)
+                + int(image_url is not None)
+                + int(image_embedding is not None)
+            ) == 1,
+            "Only one of image, image_url or image_embedding should be given"
+        )
+        
+        if image_url is not None:
+            image = _get_image_file_from_url(image_url=image_url)
+            query_vector = image_encoder.encode(image=image)
+        elif image is not None:
+            query_vector = image_encoder.encode(image=image)
+        elif image_embedding is not None:
+            query_vector = image_embedding
+        else:
+            raise ValueError('Should not get here!')
+            
+        
+        search_result = self.index.search(
+            collection_name=self.index_name,
+            query_vector=query_vector,
+            query_filter=None,  # If you don't want any filters for now
+            limit=top_n_results,
+        )
+        payloads = [hit.payload for hit in search_result]
+        
+        if show_results:
+            show_items_images(
+                items_images_list=[search_result_payload[image_key] for search_result_payload in payloads],
+                image_size=((300, 300) if result_images_size is None else result_images_size),
+            )
+        
+        return payloads
+
+    
 
 def save_json_with_arrays(
     dict_with_arrays: t.Dict[str, NDArray[float]],
@@ -41,24 +149,22 @@ def encode_images(
     images_urls: t.Dict[int, str],
     encoder_model: ImageEncoder,
     verbose: bool=False,
-    save_every_n_iterations: t.Optional[int]=None,
     save_path: t.Optional[str]=None
 ) -> t.Dict[str, t.Dict[int, NDArray[float]]]:
     images_embeddings_dict = {}
-    for i, (item_id, images_list) in (tqdm(enumerate(images_urls.items(), start=1)) if verbose else enumerate(images_urls.items(), start=1)):
+    for i, (item_id, images_list) in (tqdm(enumerate(images_urls.items(), start=1), total=len(images_urls)) if verbose else enumerate(images_urls.items(), start=1)):
         try:
-            if item_id not in images_embeddings_dict:
-                images_embeddings_dict[item_id] = {}
-            for image_url in images_list:
+            for image_url in tqdm(images_list):
                 image_number = int(image_url.split("/")[-1].replace('.webp', ''))
-                images_embeddings_dict[item_id][image_number] = encoder_model.encode(image_url=image_url)
-            if save_every_n_iterations is not None and save_path is not None:
-                if i % save_every_n_iterations == 0:
-                    dict_with_arrays_serializable = {str(key): {str(k_): value.tolist() for k_, value in subdict.items()} for key, subdict in tqdm(images_embeddings_dict.items(), desc='convering np.arrays to lists')}
-                    if verbose: print("\nsaving intermediate images_embeddings_dict to disc...")
-                    with open(save_path, mode='wb') as f:
-                        f.write(orjson.dumps(dict_with_arrays_serializable))
-                    if verbose: print("\nsaving intermediate images_embeddings_dict to disc ✔")
+                itemid_and_img_number = f"{item_id}_{image_number}"
+                img_embedding = encoder_model.encode(image_url=image_url)
+                if save_path is not None:
+                    # if verbose: print("\nsaving intermediate images_embeddings_dict to disc...")
+                    with open(save_path, mode='ab') as outfile:
+                        outfile.write(orjson.dumps({itemid_and_img_number: img_embedding.tolist()}) + b"\n")
+                    # if verbose: print("\nsaving intermediate images_embeddings_dict to disc ✔")
+                else:
+                    images_embeddings_dict[itemid_and_img_number] = img_embedding
         except Exception as e:
             print(f"Exception raised when trying to encode image at iteration {i}!")
             print(e, end='\n')
