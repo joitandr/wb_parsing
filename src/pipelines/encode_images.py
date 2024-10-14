@@ -17,7 +17,8 @@ import argparse
 from src.parse_utils import get_all_urls, get_catalog
 from src.ml.utils import (
     ImageEncoder,
-    encode_images
+    encode_images,
+    get_device
 )
 from src.utils import (
     get_uniq_items_with_images,
@@ -25,6 +26,7 @@ from src.utils import (
 
 
 ROOT_PATH = str(Path(os.getenv('PYTHONPATH')))
+# print(f"ROOT_PATH: {ROOT_PATH}")
 
 def parse_args():
     # Initialize the parser
@@ -42,10 +44,15 @@ def parse_args():
         default=None, 
         help="Where to save items embeddings"
     )
+    parser.add_argument(
+      '--device',
+      type=str,
+      default=None,
+      help='device to perform compute on: `cpu` or `cuda`'
+    )
     # Parse the arguments
     args = parser.parse_args()
     return args
-
 
 if __name__ == '__main__':
     
@@ -67,7 +74,8 @@ if __name__ == '__main__':
 
     ### Encode images
     print("\nEncoding item images...")
-    image_encoder = ImageEncoder(model_str='google/vit-base-patch16-224-in21k')
+    device = args.device if args.device is not None else get_device()
+    image_encoder = ImageEncoder(model_str='google/vit-base-patch16-224-in21k', device=device)
     images_embeddings = encode_images(
         images_urls={item_id: images_urls_list for i, (item_id, images_urls_list) in enumerate(uniq_items_with_images.items())},
         encoder_model=image_encoder,

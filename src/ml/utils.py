@@ -3,6 +3,7 @@ import typing as t
 import orjson
 from tqdm import tqdm
 import requests
+import torch
 from numpy.typing import NDArray
 from transformers import ViTImageProcessor, ViTModel
 from PIL import Image
@@ -22,12 +23,16 @@ def _get_image_file_from_url(image_url: str) -> WebPImageFile:
     image = Image.open(requests.get(image_url, stream=True).raw).convert("RGB")
     return image
     
+def get_device() -> str:
+  return 'cuda' if torch.cuda.is_available() else 'cpu'
+
 
 class ImageEncoder:
-    def __init__(self, model_str: str='google/vit-base-patch16-224-in21k'):
-        print("initializing ImageEncoder...")
+    def __init__(self, model_str: str='google/vit-base-patch16-224-in21k', device: str='cpu'):
+        self.device = device      
+        print(f"initializing ImageEncoder on device={device}...")
         self.processor = ViTImageProcessor.from_pretrained(model_str)
-        self.model = ViTModel.from_pretrained(model_str)
+        self.model = ViTModel.from_pretrained(model_str).to(self.device)
         print("ok")
         
     # @staticmethod
@@ -43,9 +48,10 @@ class ImageEncoder:
         if image is None:
             # image = ImageEncoder._get_image_file_from_url(image_url=image_url)
             image = _get_image_file_from_url(image_url=image_url)
-        inputs = self.processor(images=image, return_tensors="pt")
-        outputs = self.model(**inputs)
-        image_emb = outputs.last_hidden_state[0][0].detach().numpy()
+        with torch.no_grad():
+            inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+            outputs = self.model(**inputs)
+            image_emb = outputs.last_hidden_state[0][0].to('cpu').detach().numpy()
         return image_emb    
 
 
