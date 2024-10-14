@@ -1,3 +1,4 @@
+from pickle import FALSE
 import typing as t
 
 import orjson
@@ -35,14 +36,9 @@ class ImageEncoder:
         self.model = ViTModel.from_pretrained(model_str).to(self.device)
         print("ok")
         
-    # @staticmethod
-    # def _get_image_file_from_url(image_url: str) -> WebPImageFile:
-    #     image = Image.open(requests.get(image_url, stream=True).raw).convert("RGB")
-    #     return image
-        
     def encode(self, image_url: t.Optional[str]=None, image: t.Optional[ImageType]=None) -> NDArray[float]:
         assert (
-            (int(image_url is not None) + int(image is not None)) % 2 == 0,
+            (int(image_url is not None) + int(image is not None)) % 2 != 0,
             "At least one (and maximum one!) of image_url or image should be provided!"
         )
         if image is None:
@@ -52,8 +48,43 @@ class ImageEncoder:
             inputs = self.processor(images=image, return_tensors="pt").to(self.device)
             outputs = self.model(**inputs)
             image_emb = outputs.last_hidden_state[0][0].to('cpu').detach().numpy()
-        return image_emb    
+        return image_emb 
 
+    @staticmethod
+    def batchify_image_urls(images_urls: t.List[str], verbose: bool=False) -> t.List[ImageType]:
+      images = []
+      for url in (tqdm(images_urls, desc='batching images') if verbose else images_urls):
+          image = Image.open(requests.get(url, stream=True).raw).convert("RGB")
+          images.append(image)
+      return images
+      
+
+    def encode_batch(
+      self, 
+      images_urls: t.Optional[t.List[str]]=None, 
+      images: t.Optional[t.List[ImageType]]=None,
+      verbose: bool=False,
+    ) -> NDArray[float]:
+      assert (
+          (int(images_urls is not None) + int(images is not None)) % 2 != 0,
+          "At least one (and maximum one!) of image_url or image should be provided!"
+      )
+      if images is None:
+        images_batch = self.batchify_image_urls(images_urls=images_urls, verbose=verbose)
+      else:
+        images_batch = images
+      # Preprocess images and convert to tensors
+      inputs = self.processor(images=images_batch, return_tensors="pt", padding=True)
+      # Encode the images
+      with torch.no_grad():  # Disable gradient calculation for inference
+          outputs = self.model(**inputs.to(self.device))
+      # Get the last hidden states
+      last_hidden_states = outputs.last_hidden_state
+      # If you want to get the embeddings for each image
+      embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()  # Take the [CLS] token representation
+      return embeddings
+ 
+      
 
 class VectorIndex:
     def __init__(self, url: str, index_name: str):
